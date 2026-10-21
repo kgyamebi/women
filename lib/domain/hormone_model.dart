@@ -62,19 +62,19 @@ TwinRead buildTwin(HealthProfile profile, int day) {
     CyclePhase.lateLuteal => 0.4,
   };
 
-  final matching = profile.logs.where((log) {
-    final logged = tryParseDay(log.day);
-    if (logged == null) return false;
-    final snapshot = projectCycle(profile, logged);
-    return snapshot.phase == phase && log.symptoms.isNotEmpty;
-  }).toList();
   final counts = <String, int>{};
-  for (final log in matching) {
-    for (final symptom in log.symptoms) {
-      counts[symptom] = (counts[symptom] ?? 0) + 1;
+  if (profile.timingConfirmed) {
+    for (final log in profile.logs) {
+      final logged = tryParseDay(log.day);
+      if (logged == null || projectCycle(profile, logged).phase != phase) continue;
+      for (final symptom in log.symptoms) {
+        counts[symptom] = (counts[symptom] ?? 0) + 1;
+      }
     }
   }
-  String personal = 'Typical associations for this part of a textbook cycle. Your logs will make this personal.';
+  String personal = profile.timingConfirmed
+      ? 'Typical associations for this part of a textbook cycle. Your logs will make this personal.'
+      : 'No period date is saved. These are textbook words, not your hormone levels.';
   if (counts.isNotEmpty) {
     final top = counts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
     final name = top.first.key;

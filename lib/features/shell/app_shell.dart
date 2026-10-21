@@ -1,4 +1,5 @@
 import 'package:eva_ai/app/eva_controller.dart';
+import 'package:eva_ai/core/theme/eva_theme.dart';
 import 'package:eva_ai/core/widgets/eva_widgets.dart';
 import 'package:eva_ai/features/copilot/copilot_page.dart';
 import 'package:eva_ai/features/rhythm/rhythm_page.dart';
@@ -24,23 +25,59 @@ class _AppShellState extends State<AppShell> {
     final controller = EvaScope.of(context);
     final wide = MediaQuery.sizeOf(context).width >= 980;
     final calm = controller.brief.daypart.name == 'night';
+    final requested = controller.requestedSection;
+    if (requested != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        controller.requestedSection = null;
+        select(requested);
+        if (requested == 3) controller.noteTwinOpened();
+      });
+    }
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Stack(
         children: [
           AmbientField(calm: calm),
-          Padding(
-            padding: EdgeInsets.only(left: wide ? 118 : 0, bottom: wide ? 0 : 108),
-            child: IndexedStack(
-              index: _index,
-              children: const [
-                TodayPage(),
-                RhythmPage(),
-                CopilotPage(),
-                TwinPage(),
-                YouPage(),
-              ],
-            ),
+          Column(
+            children: [
+              Padding(
+                padding: EdgeInsets.fromLTRB(wide ? 132 : 16, 8, 16, 0),
+                child: const _TrustLine(),
+              ),
+              if (controller.saveError != null)
+                Padding(
+                  padding: EdgeInsets.fromLTRB(wide ? 132 : 16, 4, 16, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(controller.saveError!, style: EvaType.ui(13, evaOf(context).ink, height: 1.3)),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          TextButton(onPressed: controller.retrySave, child: const Text('Try saving again')),
+                          TextButton(onPressed: controller.retryLoad, child: const Text('Reload saved profile')),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.only(left: wide ? 118 : 0, bottom: wide ? 0 : 108),
+                  child: IndexedStack(
+                    index: _index,
+                    children: const [
+                      TodayPage(),
+                      RhythmPage(),
+                      CopilotPage(),
+                      TwinPage(),
+                      YouPage(),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
           if (wide)
             const Positioned(left: 16, top: 16, bottom: 16, child: _RailProxy())
@@ -64,6 +101,23 @@ class _DockProxy extends StatelessWidget {
         shell?.select(index);
         if (index == 3) EvaScope.of(context).noteTwinOpened();
       },
+    );
+  }
+}
+
+class _TrustLine extends StatelessWidget {
+  const _TrustLine();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Educational only. Not a doctor, not a diagnosis, not contraception.',
+      child: Text(
+        'Educational only. Not a doctor, not a diagnosis, not contraception.',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: EvaType.ui(12, evaOf(context).ink, height: 1.3),
+      ),
     );
   }
 }

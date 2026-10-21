@@ -19,9 +19,10 @@ class _TwinPageState extends State<TwinPage> {
     final controller = EvaScope.of(context);
     final palette = evaOf(context);
     final cycle = controller.brief.cycle;
-    final day = _day ?? cycle.day;
-    final twin = buildTwin(controller.profile, day);
     final paused = controller.profile.pregnant || controller.profile.focus == 'menopause';
+    final claimed = controller.profile.timingConfirmed || paused;
+    final day = _day ?? (claimed ? cycle.day : 1);
+    final twin = buildTwin(controller.profile, day);
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(
@@ -52,8 +53,8 @@ class _TwinPageState extends State<TwinPage> {
                         children: [
                           HormoneChart(
                             series: hormoneSeries(cycle.length),
-                            todayIndex: cycle.day - 1,
-                            selectedIndex: day - 1,
+                            todayIndex: claimed ? cycle.day - 1 : -1,
+                            selectedIndex: _day == null ? null : day - 1,
                             height: 240,
                             onSelect: paused ? null : (index) => setState(() => _day = index + 1),
                           ),
@@ -72,7 +73,14 @@ class _TwinPageState extends State<TwinPage> {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    Text('Day ${twin.day} · ${phaseLabel(twin.phase)}', style: EvaType.display(28, palette.ink)),
+                    Text(
+                      !claimed && _day == null
+                          ? 'Not enough information yet'
+                          : claimed
+                              ? 'Estimated day ${twin.day} · ${phaseLabel(twin.phase)}'
+                              : 'Textbook day ${twin.day} · ${phaseLabel(twin.phase)}',
+                      style: EvaType.display(28, palette.ink),
+                    ),
                     const SizedBox(height: 8),
                     Text(twin.personal, style: EvaType.ui(14.5, palette.muted, height: 1.4)),
                     const SizedBox(height: 14),

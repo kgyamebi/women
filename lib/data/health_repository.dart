@@ -26,6 +26,10 @@ class LocalHealthRepository implements HealthRepository {
   @override
   Future<void> save(HealthProfile profile) async {
     final prefs = await SharedPreferences.getInstance();
+    final current = await load();
+    if (saveWouldOverwriteNewer(current, profile)) {
+      throw StateError('A newer profile is already stored on this device.');
+    }
     await prefs.setString(storageKey, jsonEncode(profile.compacted().toJson()));
   }
 
@@ -67,6 +71,10 @@ class SupabaseHealthRepository implements HealthRepository {
   @override
   Future<void> save(HealthProfile profile) async {
     final userId = await _userId();
+    final current = await load();
+    if (saveWouldOverwriteNewer(current, profile)) {
+      throw StateError('A newer profile is already stored.');
+    }
     await client.from('profiles').upsert({
       'id': userId,
       'payload': profile.compacted().toJson(),
@@ -78,6 +86,7 @@ class SupabaseHealthRepository implements HealthRepository {
   Future<void> clear() async {
     final userId = await _userId();
     await client.from('profiles').delete().eq('id', userId);
+    await client.auth.signOut();
   }
 }
 

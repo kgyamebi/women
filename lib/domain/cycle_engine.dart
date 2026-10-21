@@ -120,25 +120,41 @@ double fertilityLevel(int day, int length) {
   return (_gauss(day.toDouble(), ovulation, 1.7) * 0.92).clamp(0.0, 1.0);
 }
 
-double calendarConfidence(HealthProfile profile) {
-  final irregular = !profile.regular ||
-      profile.contexts.contains('pcos') ||
-      profile.contexts.contains('irregular') ||
-      profile.focus == 'pcos';
-  if (profile.pregnant || profile.focus == 'menopause' || profile.contexts.contains('menopause')) {
-    return 0;
+/// A display number is not produced here. One saved date is not a confidence percent.
+double calendarConfidence(HealthProfile profile) => 0;
+
+class CycleTrust {
+  const CycleTrust({required this.label, required this.evidence, required this.dated});
+
+  final String label;
+  final String evidence;
+  final bool dated;
+}
+
+CycleTrust cycleTrust(HealthProfile profile) {
+  final symptoms = profile.logs.fold<int>(0, (sum, log) => sum + log.symptoms.length);
+  final sleep = profile.logs.where((log) => log.symptoms.contains('insomnia')).length;
+  final dated = profile.timingConfirmed;
+  final evidence =
+      'Based on ${dated ? '1 period date you saved' : '0 period dates'} · $symptoms symptom ${symptoms == 1 ? 'entry' : 'entries'} · $sleep sleep ${sleep == 1 ? 'note' : 'notes'}.';
+  if (!dated) {
+    return CycleTrust(label: 'Not enough information yet', evidence: evidence, dated: false);
   }
-  if (irregular) {
-    var limited = 0.56;
-    if (profile.timingConfirmed) limited += 0.08;
-    if (profile.logs.length >= 3) limited += 0.06;
-    return limited.clamp(0.4, 0.74);
+  final days = profile.logs.map((log) => tryParseDay(log.day)).whereType<DateTime>().toList()..sort();
+  final span = days.length >= 2 ? calendarDaysBetween(days.first, days.last) : 0;
+  final length = profile.cycleLength < 15 ? 28 : profile.cycleLength;
+  if (span >= length && symptoms >= 4) {
+    return CycleTrust(
+      label: 'Medium',
+      evidence: '$evidence Notes cover at least one cycle length. This is still not a hormone test.',
+      dated: true,
+    );
   }
-  var confidence = 0.70;
-  confidence += 0.18;
-  confidence += 0.08;
-  if (profile.wearableSample) confidence += 0.0;
-  return confidence.clamp(0.4, 0.96);
+  return CycleTrust(
+    label: 'Low',
+    evidence: '$evidence One saved date is not a cycle history.',
+    dated: true,
+  );
 }
 
 CycleSnapshot projectCycle(HealthProfile profile, DateTime today) {

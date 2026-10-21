@@ -1,11 +1,11 @@
 {
-    "name": "EVA AI",
+    "name": "EVA",
     "short_name": "EVA",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#07060E",
     "theme_color": "#6C5CE7",
-    "description": "Your personal women's health intelligence.",
+    "description": "Educational guidance for cycle notes. Not a medical device.",
     "orientation": "any",
     "prefer_related_applications": false,
     "icons": [

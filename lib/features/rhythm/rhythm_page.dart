@@ -21,6 +21,7 @@ class RhythmPage extends StatelessWidget {
     final today = isoDay(dateOnly(controller.now()));
     final log = controller.profile.logOn(today);
     final cycle = brief.cycle;
+    final trust = cycleTrust(controller.profile);
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(
@@ -48,21 +49,30 @@ class RhythmPage extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    CycleDial(
-                      length: cycle.length,
-                      today: cycle.day,
-                      periodLength: controller.profile.periodLength,
-                    ),
-                    const SizedBox(height: 8),
-                    _prediction(palette, 'Next period', prettyDay(cycle.nextPeriod), percentLabel(cycle.confidence)),
-                    _prediction(palette, 'Ovulation estimate', prettyDay(cycle.ovulation), percentLabel(cycle.ovulationConfidence)),
-                    _prediction(
-                      palette,
-                      'Fertile window',
-                      '${prettyDay(cycle.fertileStart)} – ${prettyDay(cycle.fertileEnd)}',
-                      'Not contraception',
-                    ),
-                    _prediction(palette, 'PMS window', prettyDay(cycle.pmsStart), 'Often, not always'),
+                    if (!controller.profile.timingConfirmed)
+                      Text(
+                        'Not enough information yet. Save a period date before a day, a fertile window, or a next period is estimated.',
+                        style: EvaType.ui(15, palette.ink, height: 1.4),
+                      )
+                    else ...[
+                      CycleDial(
+                        length: cycle.length,
+                        today: cycle.day,
+                        periodLength: controller.profile.periodLength,
+                      ),
+                      const SizedBox(height: 8),
+                      _prediction(palette, 'Next period', prettyDay(cycle.nextPeriod), trust.label),
+                      _prediction(palette, 'Ovulation estimate', prettyDay(cycle.ovulation), 'Estimate, not a test'),
+                      _prediction(
+                        palette,
+                        'Fertile window',
+                        '${prettyDay(cycle.fertileStart)} – ${prettyDay(cycle.fertileEnd)}',
+                        'Not contraception',
+                      ),
+                      _prediction(palette, 'PMS window', prettyDay(cycle.pmsStart), 'Often, not always'),
+                      const SizedBox(height: 8),
+                      Text(trust.evidence, style: EvaType.ui(13, palette.faint, height: 1.4)),
+                    ],
                     const SizedBox(height: 8),
                     Text(
                       'Temperature or an ovulation test would make this physiological. The window is not a promise, and it is not birth control.',

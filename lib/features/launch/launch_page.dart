@@ -34,7 +34,7 @@ class LaunchSplash extends StatelessWidget {
                   Text('EVA', style: EvaType.display(64, palette.ink, weight: FontWeight.w600)),
                   const SizedBox(height: 8),
                   Text(
-                    'Your personal women\'s health intelligence',
+                    'Educational guidance. Not a doctor, not a diagnosis, not contraception.',
                     style: EvaType.ui(16, palette.muted),
                     textAlign: TextAlign.center,
                   ),
@@ -126,5 +126,73 @@ class _NameCeremonyState extends State<NameCeremony> {
 
   void _enter(BuildContext context) {
     EvaScope.of(context).setName(_name.text);
+  }
+}
+
+class LaunchGate extends StatelessWidget {
+  const LaunchGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = EvaScope.of(context);
+    final palette = evaOf(context);
+    if (controller.minorBlocked) {
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Spacer(),
+                Text('EVA is not for anyone under 16.', style: EvaType.display(40, palette.ink)),
+                const SizedBox(height: 12),
+                Text(
+                  'No health notes were saved. A parent or clinician is the right place for care under 16.',
+                  style: EvaType.ui(16, palette.muted, height: 1.4),
+                ),
+                const Spacer(),
+                SoftButton(label: 'Back', onPressed: controller.clearMinorBlock),
+                const SizedBox(height: 28),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    final affirmed = controller.profile.ageAffirmed;
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(28, 36, 28, 28),
+              children: [
+                const Eyebrow(text: 'Before anything is stored'),
+                const SizedBox(height: 12),
+                Text('Educational guidance', style: EvaType.display(42, palette.ink)),
+                const SizedBox(height: 10),
+                Text(
+                  'EVA is not a doctor, not a diagnosis, and not contraception. It stores the notes you type on this device so it can show them back to you.',
+                  style: EvaType.ui(16, palette.muted, height: 1.45),
+                ),
+                const SizedBox(height: 18),
+                WordChip(label: 'I am 16 or older', selected: affirmed, onTap: controller.affirmAge),
+                const SizedBox(height: 8),
+                WordChip(label: 'I am under 16', selected: false, onTap: controller.blockMinor),
+                const SizedBox(height: 18),
+                SoftButton(
+                  label: 'Agree and continue',
+                  onPressed: affirmed ? controller.acceptHealthConsent : null,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -39,6 +39,14 @@ Future<void> _walk(WidgetTester tester, Size size) async {
   await tester.pump(const Duration(milliseconds: 800));
   _check(tester);
 
+  expect(find.text('I am 16 or older'), findsOneWidget);
+  await tester.tap(find.text('I am 16 or older'));
+  await tester.pump();
+  await tester.tap(find.text('Agree and continue'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 800));
+  _check(tester);
+
   expect(find.text('What should I call you?'), findsOneWidget);
   await tester.enterText(find.byType(TextField), 'Sarah');
   await tester.pump();
@@ -48,7 +56,7 @@ Future<void> _walk(WidgetTester tester, Size size) async {
   _check(tester);
 
   expect(find.text('Sarah'), findsWidgets);
-  expect(find.textContaining('follicular'), findsWidgets);
+  expect(find.textContaining('Not enough information yet'), findsWidgets);
 
   await _nav(tester, 'Rhythm');
   expect(find.text('A calendar, not a blood test').hitTestable(), findsOneWidget);
@@ -77,8 +85,19 @@ Future<void> _walk(WidgetTester tester, Size size) async {
   _check(tester);
 
   await _nav(tester, 'Today');
-  await _reveal(tester, size, 'Pregnancy');
-  await tester.tap(find.text('Pregnancy').hitTestable());
+  await _reveal(tester, size, 'Studio');
+  await tester.dragFrom(Offset(size.width / 2, size.height * 0.7), const Offset(0, -220));
+  await tester.pump(const Duration(milliseconds: 200));
+  final future = find.text('Future').hitTestable();
+  expect(future, findsOneWidget);
+  final point = tester.getCenter(future);
+  final pregnancy = find.text('The day reshapes around a confirmed pregnancy.').hitTestable();
+  for (var i = 0; i < 5 && pregnancy.evaluate().isEmpty; i++) {
+    await tester.dragFrom(point, const Offset(-340, 0));
+    await tester.pump(const Duration(milliseconds: 200));
+  }
+  expect(pregnancy, findsOneWidget);
+  await tester.tap(pregnancy);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 500));
   expect(find.text('Reshape EVA around this'), findsOneWidget);
@@ -103,7 +122,7 @@ Future<void> _nav(WidgetTester tester, String label) async {
 
 Future<void> _reveal(WidgetTester tester, Size size, String label) async {
   final target = find.text(label).hitTestable();
-  for (var i = 0; i < 8 && target.evaluate().isEmpty; i++) {
+  for (var i = 0; i < 18 && target.evaluate().isEmpty; i++) {
     await tester.dragFrom(Offset(size.width / 2, size.height / 2), const Offset(0, -320));
     await tester.pump(const Duration(milliseconds: 200));
   }

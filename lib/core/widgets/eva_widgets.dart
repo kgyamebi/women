@@ -583,8 +583,9 @@ class _HormonePainter extends CustomPainter {
       _stroke(canvas, _smooth(size, (point) => point.testosterone), testosterone, glow: true);
       _stroke(canvas, _smooth(size, (point) => point.cortisol), cortisol, glow: true);
     }
-    final index = (selectedIndex ?? todayIndex).clamp(0, math.max(0, series.length - 1));
-    if (series.isNotEmpty) {
+    final raw = selectedIndex ?? todayIndex;
+    if (raw >= 0 && series.isNotEmpty) {
+      final index = raw.clamp(0, math.max(0, series.length - 1));
       final x = series.length == 1 ? 0.0 : index / (series.length - 1) * size.width;
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), Paint()..color = ink.withValues(alpha: 0.45));
     }
@@ -843,8 +844,8 @@ class _NavItem extends StatelessWidget {
 
 Route<T> evaRoute<T>(Widget page) {
   return PageRouteBuilder<T>(
-    transitionDuration: const Duration(milliseconds: 460),
-    reverseTransitionDuration: const Duration(milliseconds: 320),
+    transitionDuration: const Duration(milliseconds: 180),
+    reverseTransitionDuration: const Duration(milliseconds: 160),
     pageBuilder: (context, animation, secondary) => page,
     transitionsBuilder: (context, animation, secondary, child) {
       final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);

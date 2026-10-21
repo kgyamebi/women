@@ -25,7 +25,20 @@ class EvaController extends ChangeNotifier {
   HealthProfile profile = HealthProfile.draft('');
   bool ready = false;
   String? toast;
+  String? saveError;
+  int? requestedSection;
   Timer? _toastTimer;
+  bool _holdSaves = false;
+  Future<void> _queue = Future<void>.value();
+  DailyLog? _lazyUndo;
+  bool _lazyHadLog = false;
+  bool _keepUndo = false;
+  bool _lazyAddedWater = false;
+  bool _lazyAddedMove = false;
+  bool minorBlocked = false;
+  final List<DateTime> _writes = [];
+
+  bool get canUndoLazy => _lazyHadLog || _lazyUndo != null;
 
   DailyBrief get brief => buildBrief(profile, now());
 
@@ -41,31 +54,42 @@ class EvaController extends ChangeNotifier {
   }
 
   Future<void> boot() async {
-    final watch = Stopwatch()..start();
     try {
       final loaded = await repository.load();
       if (loaded != null && loaded.name.trim().isNotEmpty) {
         profile = loaded;
       }
     } catch (_) {
-      profile = HealthProfile.draft('');
-    }
-    final remaining = 1500 - watch.elapsedMilliseconds;
-    if (remaining > 0) {
-      await Future<void>.delayed(Duration(milliseconds: remaining));
+      _holdSaves = true;
+      saveError = 'The saved profile could not be read. It was not overwritten.';
     }
     ready = true;
     notifyListeners();
   }
 
+  Future<void> retryLoad() async {
+    _holdSaves = false;
+    saveError = null;
+    ready = false;
+    notifyListeners();
+    await boot();
+  }
+
   void setName(String raw) {
-    final name = raw.trim();
+    final name = raw.trim().replaceAll(RegExp(r'[\u0000-\u001F]'), '');
     if (name.isEmpty) return;
+    final clipped = name.length > 40 ? name.substring(0, 40) : name;
     if (profile.name.isEmpty) {
-      profile = HealthProfile.draft(name, now: now());
-      flash('Welcome, $name');
+      profile = HealthProfile.draft(clipped, now: now()).copyWith(
+        ageAffirmed: profile.ageAffirmed,
+        healthConsentAt: profile.healthConsentAt,
+        audit: profile.audit,
+        revision: profile.revision,
+        theme: profile.theme,
+      );
+      flash('Welcome, $clipped');
     } else {
-      profile = profile.copyWith(name: name, communityAlias: aliasFor(name));
+      profile = profile.copyWith(name: clipped, communityAlias: aliasFor(clipped));
       flash('Name saved');
     }
     _commit();
@@ -82,6 +106,7 @@ class EvaController extends ChangeNotifier {
   }
 
   void confirmTiming({required int daysAgo, required int length, required bool regular}) {
+    if (!_guardHealth()) return;
     final start = shiftDays(now(), -daysAgo.clamp(0, 80));
     profile = profile.copyWith(
       lastPeriodStart: start,
@@ -95,6 +120,7 @@ class EvaController extends ChangeNotifier {
   }
 
   void setIntentions(List<String> ids) {
+    if (!_guardHealth()) return;
     var focus = 'cycle';
     var regular = profile.regular;
     if (ids.contains('pregnant')) {
@@ -102,7 +128,6 @@ class EvaController extends ChangeNotifier {
         intentions: ids,
         pregnant: true,
         focus: 'pregnancy',
-        pregnancyLmp: profile.pregnancyLmp ?? profile.lastPeriodStart,
         answered: _withAnswer('intention'),
       );
       flash('Focus updated');
@@ -148,7 +173,6 @@ class EvaController extends ChangeNotifier {
       if (contexts.contains('pregnant')) {
         pregnant = true;
         focus = 'pregnancy';
-        lmp ??= profile.lastPeriodStart;
       }
     }
     profile = profile.copyWith(
@@ -197,6 +221,51 @@ class EvaController extends ChangeNotifier {
     _commit();
   }
 
+  void affirmAge() {
+    minorBlocked = false;
+    profile = profile.copyWith(ageAffirmed: true);
+    notifyListeners();
+  }
+
+  void blockMinor() {
+    minorBlocked = true;
+    profile = profile.copyWith(ageAffirmed: false, healthConsentAt: null);
+    notifyListeners();
+  }
+
+  void clearMinorBlock() {
+    minorBlocked = false;
+    notifyListeners();
+  }
+
+  void acceptHealthConsent() {
+    if (!profile.ageAffirmed || minorBlocked) return;
+    final at = now().toIso8601String();
+    final audit = [...profile.audit, 'consent $at'];
+    profile = profile.copyWith(
+      healthConsentAt: at,
+      audit: audit.length > 40 ? audit.sublist(audit.length - 40) : audit,
+    );
+    _commit();
+  }
+
+  bool _guardHealth() {
+    if (profile.healthReady) return true;
+    flash('Health notes stay off until you are 16 or older and agree to on-device storage.');
+    return false;
+  }
+
+  bool _guardRate() {
+    final cut = now().subtract(const Duration(minutes: 1));
+    _writes.removeWhere((time) => time.isBefore(cut));
+    if (_writes.length >= 30) {
+      flash('Too many notes in a minute. Wait, then try again. Nothing was discarded.');
+      return false;
+    }
+    _writes.add(now());
+    return true;
+  }
+
   void updateToday({
     int? flow,
     String? mood,
@@ -205,6 +274,13 @@ class EvaController extends ChangeNotifier {
     bool setEnergy = false,
     List<String>? symptoms,
   }) {
+    if (!_guardHealth() || !_guardRate()) return;
+    if (!_keepUndo) {
+      _lazyUndo = null;
+      _lazyHadLog = false;
+      _lazyAddedWater = false;
+      _lazyAddedMove = false;
+    }
     final day = isoDay(dateOnly(now()));
     final logs = [...profile.logs];
     final index = logs.indexWhere((log) => log.day == day);
@@ -225,15 +301,353 @@ class EvaController extends ChangeNotifier {
     _commit();
   }
 
+  void repeatYesterday() {
+    final previous = profile.logOn(isoDay(shiftDays(now(), -1)));
+    if (previous == null) return;
+    updateToday(
+      flow: previous.flow,
+      mood: previous.mood,
+      stress: previous.stress,
+      energy: previous.energy,
+      setEnergy: true,
+      symptoms: [...previous.symptoms],
+    );
+    flash('Today matches yesterday');
+    _commit();
+  }
+
+  void _armUndo() {
+    final existing = profile.logOn(isoDay(dateOnly(now())));
+    _lazyUndo = existing;
+    _lazyHadLog = true;
+    _lazyAddedWater = false;
+    _lazyAddedMove = false;
+  }
+
+  void _copyOntoToday(DailyLog source, String message, {required bool blanksOnly}) {
+    final today = profile.logOn(isoDay(dateOnly(now())));
+    final empty = today == null || !logHasContent(today);
+    _armUndo();
+    _keepUndo = true;
+    if (empty || !blanksOnly) {
+      updateToday(
+        flow: source.flow,
+        mood: source.mood,
+        stress: source.stress,
+        energy: source.energy,
+        setEnergy: true,
+        symptoms: [...source.symptoms],
+      );
+    } else {
+      updateToday(
+        mood: today.mood.isEmpty ? source.mood : null,
+        stress: today.stress.isEmpty ? source.stress : null,
+        energy: today.energy,
+        setEnergy: today.energy == null && source.energy != null,
+        symptoms: {...today.symptoms, ...source.symptoms}.toList(),
+      );
+    }
+    _keepUndo = false;
+    flash(message);
+    _commit();
+  }
+
+  void nothingNew() {
+    if (profile.shortcuts.isNotEmpty) {
+      applyShortcut(profile.shortcuts.last.id);
+      return;
+    }
+    final prior = latestPriorLog(profile, now());
+    if (prior == null) {
+      flash('Log once. After that, Nothing new can copy it.');
+      return;
+    }
+    _copyOntoToday(prior, 'Copied your note from ${prior.day}. Undo if today is different.', blanksOnly: true);
+  }
+
+  void copyLastNote() {
+    final prior = latestPriorLog(profile, now());
+    final yesterday = isoDay(shiftDays(now(), -1));
+    if (prior == null || prior.day == yesterday) return;
+    _copyOntoToday(prior, 'Copied your note from ${prior.day}. Undo if today is different.', blanksOnly: true);
+  }
+
+  void saveTodayShortcut() {
+    final today = profile.logOn(isoDay(dateOnly(now())));
+    if (today == null || !logHasContent(today)) {
+      flash('Nothing to save yet. One note is enough.');
+      return;
+    }
+    final name = shortcutLabel(today);
+    if (name.isEmpty || profile.shortcuts.any((shortcut) => shortcut.name == name)) {
+      flash('That shortcut is already saved.');
+      return;
+    }
+    final next = [
+      ...profile.shortcuts,
+      LogShortcut(
+        id: '${profile.shortcuts.length}-$name',
+        name: name,
+        flow: today.flow,
+        mood: today.mood,
+        stress: today.stress,
+        energy: today.energy,
+        symptoms: [...today.symptoms],
+      ),
+    ];
+    profile = profile.copyWith(shortcuts: next.length > 8 ? next.sublist(next.length - 8) : next);
+    flash('Saved "$name". Next time it is one tap.');
+    _commit();
+  }
+
+  void applyShortcut(String id) {
+    LogShortcut? shortcut;
+    for (final item in profile.shortcuts) {
+      if (item.id == id) shortcut = item;
+    }
+    if (shortcut == null) return;
+    _copyOntoToday(
+      DailyLog(
+        day: '',
+        flow: shortcut.flow,
+        mood: shortcut.mood,
+        stress: shortcut.stress,
+        energy: shortcut.energy,
+        symptoms: [...shortcut.symptoms],
+      ),
+      'Copied your shortcut "${shortcut.name}" onto today. Undo if today is different.',
+      blanksOnly: true,
+    );
+  }
+
+  void removeShortcut(String id) {
+    profile = profile.copyWith(shortcuts: profile.shortcuts.where((shortcut) => shortcut.id != id).toList());
+    flash('Shortcut removed. Your logs are still here.');
+    _commit();
+  }
+
+  void addUsual(String symptom) {
+    final today = profile.logOn(isoDay(dateOnly(now())));
+    if (today != null && today.symptoms.contains(symptom)) {
+      flash('${noteLabel(symptom)} is already on today.');
+      return;
+    }
+    _armUndo();
+    _keepUndo = true;
+    updateToday(symptoms: {...?today?.symptoms, symptom}.toList());
+    _keepUndo = false;
+    flash('Added ${noteLabel(symptom)} from your notes. Undo if today is different.');
+    _commit();
+  }
+
+  void markWater() {
+    final day = isoDay(dateOnly(now()));
+    final today = profile.logOn(day);
+    if (today != null && today.symptoms.contains('water')) {
+      flash('Water is already on today.');
+      return;
+    }
+    _armUndo();
+    if (!profile.mealsNoted.contains(day)) {
+      profile = profile.copyWith(mealsNoted: [...profile.mealsNoted, day]);
+      _lazyAddedWater = true;
+    }
+    _keepUndo = true;
+    updateToday(symptoms: {...?today?.symptoms, 'water'}.toList());
+    _keepUndo = false;
+    flash('Water noted for today. Undo if that was a slip.');
+    _commit();
+  }
+
+  void markMoved() {
+    if (!_guardHealth()) return;
+    final day = isoDay(dateOnly(now()));
+    if (profile.workouts.contains(day)) {
+      flash('Movement is already on today.');
+      return;
+    }
+    _armUndo();
+    profile = profile.copyWith(workouts: [...profile.workouts, day]);
+    _lazyAddedMove = true;
+    flash('Movement noted for today. Undo if that was a slip.');
+    _touchStreak();
+    _award('workout');
+    _commit();
+  }
+
+  void undoLazy() {
+    if (!canUndoLazy) return;
+    final day = isoDay(dateOnly(now()));
+    final logs = [...profile.logs]..removeWhere((log) => log.day == day);
+    final previous = _lazyUndo;
+    if (previous != null) logs.add(previous);
+    var next = profile.copyWith(logs: logs);
+    if (_lazyAddedWater) {
+      next = next.copyWith(mealsNoted: next.mealsNoted.where((item) => item != day).toList());
+    }
+    if (_lazyAddedMove) {
+      next = next.copyWith(workouts: next.workouts.where((item) => item != day).toList());
+    }
+    profile = next;
+    _lazyUndo = null;
+    _lazyHadLog = false;
+    _lazyAddedWater = false;
+    _lazyAddedMove = false;
+    flash('Put today back the way it was.');
+    _commit();
+  }
+
   void dismissWhisper(String id) {
     if (profile.dismissed.contains(id)) return;
     profile = profile.copyWith(dismissed: [...profile.dismissed, id]);
     _commit();
   }
 
+  void requestSection(int index) {
+    requestedSection = index;
+    notifyListeners();
+  }
+
+  void noteSeen(String id) {
+    final key = 'seen:$id';
+    if (profile.answered.contains(key)) return;
+    profile = profile.copyWith(answered: [...profile.answered, key]);
+    _commit();
+  }
+
+  void say(String message) {
+    flash(message);
+    notifyListeners();
+  }
+
+  void hear(String raw) {
+    if (!_guardHealth()) return;
+    final text = raw.trim();
+    if (text.isEmpty) return;
+    if (text.length > 2000) {
+      flash('That note is too long. Shorten it and send it again.');
+      return;
+    }
+    if (looksLikeCrisis(text)) {
+      ask(text);
+      requestSection(2);
+      return;
+    }
+    final words = text
+        .toLowerCase()
+        .replaceAll(RegExp("[^a-z0-9\\s']"), ' ')
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .toSet();
+    final today = profile.logOn(isoDay(dateOnly(now())));
+    final symptoms = <String>{...today?.symptoms ?? const []};
+    String? mood;
+    String? stress;
+    double? energy;
+    var setEnergy = false;
+    var noted = false;
+
+    void mark() => noted = true;
+    if (words.any((word) => const {'exhausted', 'tired', 'wiped', 'drained'}.contains(word))) {
+      mood = 'low';
+      energy = 0.25;
+      setEnergy = true;
+      mark();
+    }
+    if (words.contains('cramp') || words.contains('cramps')) {
+      symptoms.add('cramp');
+      mark();
+    }
+    if (words.contains('headache') || words.contains('migraine')) {
+      symptoms.add('headache');
+      mark();
+    }
+    if (words.contains('acne') || words.contains('breakout') || words.contains('pimple')) {
+      symptoms.add('acne');
+      mark();
+    }
+    if (words.contains('anxious') || words.contains('anxiety')) {
+      mood = 'frayed';
+      stress = 'loud';
+      mark();
+    }
+    final lower = text.toLowerCase();
+    if (words.contains('insomnia') ||
+        words.contains('restless') ||
+        lower.contains('slept terribly') ||
+        lower.contains('slept badly') ||
+        lower.contains('slept horribly') ||
+        lower.contains('slept horrible')) {
+      symptoms.add('insomnia');
+      mood ??= 'low';
+      mark();
+    }
+    if (words.contains('stressed') || words.contains('stress')) {
+      mood ??= 'frayed';
+      stress = 'loud';
+      mark();
+    }
+    if (words.contains('craving') || words.contains('cravings')) {
+      symptoms.add('craving');
+      mark();
+    }
+    if (words.contains('bloated') || words.contains('bloating') || words.contains('bloat')) {
+      symptoms.add('bloating');
+      mark();
+    }
+    if (words.contains('calm')) {
+      mood = 'calm';
+      mark();
+    }
+    if (words.contains('happy') || words.contains('bright')) {
+      mood = 'bright';
+      mark();
+    }
+    if (words.contains('water') || words.contains('hydrated')) {
+      symptoms.add('water');
+      final day = isoDay(dateOnly(now()));
+      if (!profile.mealsNoted.contains(day)) {
+        profile = profile.copyWith(mealsNoted: [...profile.mealsNoted, day]);
+      }
+      mark();
+    }
+    if (words.contains('walked') || words.contains('walk') || words.contains('workout') || words.contains('ran') || words.contains('run')) {
+      final day = isoDay(dateOnly(now()));
+      if (!profile.workouts.contains(day)) {
+        profile = profile.copyWith(workouts: [...profile.workouts, day]);
+      }
+      mark();
+    }
+    if (lower.contains('breaking out') || (lower.contains('skin') && lower.contains('clear'))) {
+      symptoms.add(lower.contains('clear') ? 'skin-clear' : 'acne');
+      mark();
+    }
+    if (!noted) {
+      ask(text);
+      requestSection(2);
+      return;
+    }
+    updateToday(mood: mood, stress: stress, energy: energy, setEnergy: setEnergy, symptoms: symptoms.toList());
+    final at = now().toIso8601String();
+    profile = profile.copyWith(
+      chat: [
+        ...profile.chat,
+        ChatTurn(role: 'you', text: text, at: at),
+        ChatTurn(role: 'eva', text: 'Kept, so you do not have to repeat it.', at: at),
+      ],
+    );
+    flash('Noted. Change it with one tap if that is off.');
+    _commit();
+  }
+
   void ask(String text) {
+    if (!_guardHealth() || !_guardRate()) return;
     final clean = text.trim();
     if (clean.isEmpty) return;
+    if (clean.length > 2000) {
+      flash('That question is too long. Shorten it and send it again.');
+      return;
+    }
     final reply = copilotReply(profile: profile, brief: brief, question: clean);
     final at = now().toIso8601String();
     profile = profile.copyWith(
@@ -250,6 +664,7 @@ class EvaController extends ChangeNotifier {
   void noteTwinOpened() => _award('twin');
 
   void addKick() {
+    if (!_guardHealth()) return;
     final day = isoDay(dateOnly(now()));
     final count = profile.kicksDay == day ? profile.kicks + 1 : 1;
     profile = profile.copyWith(kicksDay: day, kicks: count);
@@ -285,6 +700,11 @@ class EvaController extends ChangeNotifier {
   }
 
   void logBbt(double celsius) {
+    if (!_guardHealth()) return;
+    if (celsius < 34 || celsius > 42) {
+      flash('That temperature is outside the range EVA will store. It was not saved.');
+      return;
+    }
     final day = isoDay(dateOnly(now()));
     final points = [...profile.bbt]..removeWhere((point) => point.day == day);
     points.add(BbtPoint(day: day, celsius: celsius));
@@ -334,6 +754,11 @@ class EvaController extends ChangeNotifier {
   }
 
   void logWeight(double kg) {
+    if (!_guardHealth()) return;
+    if (kg < 20 || kg > 300) {
+      flash('That weight is outside the range EVA will store. It was not saved.');
+      return;
+    }
     final day = isoDay(dateOnly(now()));
     final points = [...profile.weights]..removeWhere((point) => point.day == day);
     points.add(WeightPoint(day: day, kg: kg));
@@ -414,9 +839,99 @@ class EvaController extends ChangeNotifier {
     _commit();
   }
 
+  void addCircle(String name, String role) {
+    final clean = name.trim();
+    if (clean.isEmpty) return;
+    profile = profile.copyWith(
+      circle: [
+        ...profile.circle,
+        CirclePerson(
+          id: now().microsecondsSinceEpoch.toString(),
+          name: clean,
+          role: role,
+        ),
+      ],
+    );
+    flash('$clean is in the circle. Nothing is shared yet.');
+    _commit();
+  }
+
+  void removeCircle(String id) {
+    profile = profile.copyWith(circle: profile.circle.where((person) => person.id != id).toList());
+    flash('Removed. Their access is gone.');
+    _commit();
+  }
+
+  void toggleCirclePermission(String id, String key) {
+    _editCircle(id, (person) {
+      final next = [...person.permissions];
+      if (next.contains(key)) {
+        next.remove(key);
+      } else {
+        next.add(key);
+      }
+      return person.copyWith(permissions: next);
+    }, 'Permission updated');
+  }
+
+  void completeMission(String id, String mission) {
+    final stamp = '${isoDay(now())}|$mission';
+    _editCircle(id, (person) {
+      if (person.missionDays.contains(stamp)) return person;
+      return person.copyWith(missionDays: [...person.missionDays, stamp]);
+    }, 'Mission kept');
+  }
+
+  void addCircleGoal(String id, String title) {
+    final clean = title.trim();
+    if (clean.isEmpty) return;
+    _editCircle(id, (person) {
+      if (person.goals.contains(clean)) return person;
+      return person.copyWith(goals: [...person.goals, clean]);
+    }, 'Goal shared');
+  }
+
+  void addCircleMemory(String id, String title) {
+    final clean = title.trim();
+    if (clean.isEmpty) return;
+    _editCircle(id, (person) {
+      return person.copyWith(
+        memories: [
+          ...person.memories,
+          CircleMemory(title: clean, day: isoDay(now()), note: ''),
+        ],
+      );
+    }, 'Memory kept');
+  }
+
+  void circleCheckIn(String id) {
+    _editCircle(id, (person) => person.copyWith(checkIns: person.checkIns + 1), 'Check-in kept');
+  }
+
+  void _editCircle(String id, CirclePerson Function(CirclePerson person) change, String message) {
+    final people = [...profile.circle];
+    final index = people.indexWhere((person) => person.id == id);
+    if (index < 0) return;
+    people[index] = change(people[index]);
+    profile = profile.copyWith(circle: people);
+    flash(message);
+    _commit();
+  }
+
   void publish(String space, String body) {
     final text = body.trim();
     if (text.isEmpty) return;
+    if (!_guardHealth()) return;
+    if (text.length > 2000) {
+      flash('That note is too long. Shorten it and send it again.');
+      return;
+    }
+    final safety = safetyNotice(text);
+    if (safety.isNotEmpty) {
+      flash(safety);
+      notifyListeners();
+      return;
+    }
     profile = profile.copyWith(
       posts: [
         ...profile.posts,
@@ -434,15 +949,34 @@ class EvaController extends ChangeNotifier {
     _commit();
   }
 
-  Future<void> deleteAll() async {
+  Future<String> deleteAll() async {
     _toastTimer?.cancel();
     toast = null;
-    profile = HealthProfile.draft('');
+    _holdSaves = true;
     try {
+      await _queue;
       await repository.clear();
-    } catch (_) {}
+    } catch (_) {
+      _holdSaves = false;
+      saveError = 'Could not delete. Your profile is still here.';
+      notifyListeners();
+      return saveError!;
+    }
+    final receipt = now().toIso8601String();
+    profile = HealthProfile.draft('');
+    minorBlocked = false;
+    saveError = null;
+    _holdSaves = false;
     notifyListeners();
+    return 'Deletion receipt $receipt. Removed from this device: profile, notes, shortcuts, consent record, and local session data. If Supabase is configured, the profile row is removed and the session is signed out. This app cannot delete the authentication user itself, and it cannot delete a copy you already exported.';
   }
+
+  void retrySave() {
+    if (_holdSaves) return;
+    _commit();
+  }
+
+  Future<void> get saved => _queue;
 
   List<String> _withAnswer(String id) {
     if (profile.answered.contains(id)) return profile.answered;
@@ -477,6 +1011,11 @@ class EvaController extends ChangeNotifier {
       'beauty' => 'Skin is the focus',
       'fitness' => 'Strength is the focus',
       'nutrition' => 'Food is the focus',
+      'teen' => 'Teen years are the focus',
+      'college' => 'College is the focus',
+      'work' => 'Work is the focus',
+      'postpartum' => 'Postpartum is the focus',
+      'perimenopause' => 'Perimenopause is the focus',
       _ => 'Cycle is the focus',
     };
   }
@@ -493,8 +1032,22 @@ class EvaController extends ChangeNotifier {
   }
 
   void _commit() {
+    profile = profile.copyWith(revision: profile.revision + 1);
     notifyListeners();
-    repository.save(profile);
+    if (_holdSaves) return;
+    final snapshot = profile;
+    _queue = _queue.then((_) async {
+      try {
+        await repository.save(snapshot);
+        if (saveError != null && identical(profile, snapshot)) {
+          saveError = null;
+          notifyListeners();
+        }
+      } catch (_) {
+        saveError = 'Could not save. Your notes are still on this screen.';
+        notifyListeners();
+      }
+    });
   }
 
   @override

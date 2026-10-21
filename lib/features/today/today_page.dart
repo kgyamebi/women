@@ -2,6 +2,7 @@ import 'package:eva_ai/app/eva_controller.dart';
 import 'package:eva_ai/core/theme/eva_theme.dart';
 import 'package:eva_ai/core/widgets/eva_widgets.dart';
 import 'package:eva_ai/domain/domain.dart';
+import 'package:eva_ai/features/shell/eva_search.dart';
 import 'package:eva_ai/features/studio/experience_page.dart';
 import 'package:eva_ai/features/studio/studio_catalog.dart';
 import 'package:flutter/material.dart';
@@ -25,7 +26,7 @@ class TodayPage extends StatelessWidget {
             final story = _StoryColumn(brief: brief, profile: profile, palette: palette);
             final side = _SideColumn(brief: brief, palette: palette);
             return ListView(
-              padding: const EdgeInsets.fromLTRB(22, 18, 22, 28),
+              padding: const EdgeInsets.fromLTRB(22, 18, 22, 96),
               children: [
                 Center(
                   child: ConstrainedBox(
@@ -71,6 +72,8 @@ class _StoryColumn extends StatelessWidget {
         const SizedBox(height: 12),
         Text(brief.greeting, style: EvaType.ui(18, palette.muted)),
         Text(profile.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: EvaType.display(54, palette.ink)),
+        const SizedBox(height: 14),
+        const _CommandCenter(),
         const SizedBox(height: 18),
         GlassPanel(
           child: Row(
@@ -110,10 +113,16 @@ class _StoryColumn extends StatelessWidget {
         ),
         ),
         const SizedBox(height: 8),
+        const _OneTap(),
+        const SizedBox(height: 8),
+        const _EasyDay(),
+        const SizedBox(height: 8),
         GlassPanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Text(briefName(brief.daypart), style: EvaType.display(26, palette.ink)),
+              const SizedBox(height: 4),
               Text(brief.recommendTitle, style: EvaType.ui(13, palette.muted, weight: FontWeight.w600, tracking: 0.6)),
               const SizedBox(height: 12),
               for (final item in brief.recommendations) ...[
@@ -255,10 +264,10 @@ class _SideColumn extends StatelessWidget {
           height: 156,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            itemCount: studioLinks.length,
+            itemCount: orderedStudio(EvaScope.of(context).profile.focus, wearableSample: EvaScope.of(context).profile.wearableSample).length,
             separatorBuilder: (context, index) => const SizedBox(width: 12),
             itemBuilder: (context, index) {
-              final link = studioLinks[index];
+              final link = orderedStudio(EvaScope.of(context).profile.focus, wearableSample: EvaScope.of(context).profile.wearableSample)[index];
               return SizedBox(
                 width: 210,
                 child: GlassPanel(
@@ -357,6 +366,295 @@ String _questionLabel(String id) {
   }
 }
 
+class _CommandCenter extends StatelessWidget {
+  const _CommandCenter();
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = EvaScope.of(context);
+    final palette = evaOf(context);
+    final brief = controller.brief;
+    final forecast = dayForecast(controller.profile, brief, controller.now());
+    final trust = cycleTrust(controller.profile);
+    final actions = orderedStudio(controller.profile.focus, wearableSample: controller.profile.wearableSample);
+    StudioLink? byId(String id) {
+      for (final link in actions) {
+        if (link.id == id) return link;
+      }
+      return null;
+    }
+
+    void open(String id) => Navigator.of(context).push(evaRoute(ExperiencePage(id: id)));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${brief.orbValue} · ${brief.orbKicker}',
+          style: EvaType.ui(15, palette.secondary, weight: FontWeight.w600),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _forecastStat(
+                palette,
+                'Energy',
+                trust.dated ? (forecast.rising == null ? 'Steady' : forecast.rising! ? 'Higher' : 'Lower') : 'Unknown',
+                null,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _forecastStat(
+                palette,
+                'Mood',
+                _knownMood(controller, trust.dated) ? forecast.mood : 'Unknown',
+                null,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: _forecastStat(palette, 'Focus', trust.dated ? forecast.focus : 'Unknown', null)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(trust.dated ? 'Phase table, not a measurement. ${trust.evidence}' : trust.evidence, style: EvaType.ui(12, palette.faint)),
+        const SizedBox(height: 8),
+        Text(stageLine(controller.profile.focus), style: EvaType.ui(14, palette.ink, height: 1.4)),
+        const SizedBox(height: 6),
+        Text(pulseLine(controller.profile, controller.now()), style: EvaType.ui(14, palette.muted, height: 1.4)),
+        const SizedBox(height: 10),
+        for (final line in forecast.modeled)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(line, style: EvaType.ui(15, palette.ink, weight: FontWeight.w500)),
+          ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (byId('fitness') != null) WordChip(label: 'Workout', selected: false, onTap: () => open('fitness')),
+            if (byId('nutrition') != null) WordChip(label: 'Nutrition', selected: false, onTap: () => open('nutrition')),
+            if (byId('mental') != null) WordChip(label: 'Mood', selected: false, onTap: () => open('mental')),
+            if (byId('wearables') != null) WordChip(label: 'Sleep', selected: false, onTap: () => open('wearables')),
+            WordChip(label: 'Fertility', selected: false, onTap: () => open('fertility')),
+            WordChip(label: 'Labs', selected: false, onTap: () => open('labs')),
+            WordChip(label: 'Symptom', selected: false, onTap: () => controller.requestSection(1)),
+            WordChip(label: 'Search', selected: false, onTap: () => openEvaSearch(context)),
+            WordChip(label: 'Connect', selected: false, onTap: () => open('connect')),
+            WordChip(label: 'Week', selected: false, onTap: () => open('future')),
+          ],
+        ),
+        const SizedBox(height: 12),
+        const _TellEva(),
+      ],
+    );
+  }
+
+  bool _knownMood(EvaController controller, bool dated) {
+    final mood = controller.profile.logOn(isoDay(controller.now()))?.mood ?? '';
+    return dated || mood.isNotEmpty;
+  }
+
+  Widget _forecastStat(EvaPalette palette, String label, String value, bool? rising) {
+    return GlassPanel(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: EvaType.ui(12, palette.muted)),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Flexible(child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: EvaType.display(22, palette.ink))),
+              if (rising != null) ...[
+                const SizedBox(width: 4),
+                Icon(rising ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 16, color: palette.secondary),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TellEva extends StatefulWidget {
+  const _TellEva();
+
+  @override
+  State<_TellEva> createState() => _TellEvaState();
+}
+
+class _TellEvaState extends State<_TellEva> {
+  final _text = TextEditingController();
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _send() {
+    final value = _text.text;
+    _text.clear();
+    EvaScope.of(context).hear(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = evaOf(context);
+    return GlassPanel(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _text,
+              style: EvaType.ui(15, palette.ink),
+              decoration: InputDecoration(
+                hintText: 'Say it: I slept horribly',
+                hintStyle: EvaType.ui(15, palette.faint),
+                border: InputBorder.none,
+              ),
+              onSubmitted: (_) => _send(),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Send',
+            onPressed: _send,
+            icon: Icon(Icons.arrow_upward_rounded, color: palette.ink),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EasyDay extends StatelessWidget {
+  const _EasyDay();
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = EvaScope.of(context);
+    final palette = evaOf(context);
+    final now = controller.now();
+    final today = controller.profile.logOn(isoDay(dateOnly(now)));
+    final prior = latestPriorLog(controller.profile, now);
+    final yesterday = isoDay(shiftDays(now, -1));
+    final usual = usualNotes(controller.profile);
+    final canSave = today != null && logHasContent(today);
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Less typing', style: EvaType.ui(13, palette.muted, weight: FontWeight.w600, tracking: 0.6)),
+          const SizedBox(height: 8),
+          Text(
+            'Copies only notes you already made. Nothing here is a prediction.',
+            style: EvaType.ui(14.5, palette.ink, height: 1.4),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (controller.profile.shortcuts.isNotEmpty || prior != null)
+                WordChip(label: 'Nothing new', selected: false, onTap: controller.nothingNew),
+              if (prior != null && prior.day != yesterday) WordChip(label: 'Copy ${prior.day}', selected: false, onTap: controller.copyLastNote),
+              if (canSave) WordChip(label: 'Save today as a shortcut', selected: false, onTap: controller.saveTodayShortcut),
+              WordChip(label: 'Drank water', selected: today?.symptoms.contains('water') ?? false, onTap: controller.markWater),
+              WordChip(label: 'Moved', selected: controller.profile.workouts.contains(isoDay(dateOnly(now))), onTap: controller.markMoved),
+              if (controller.canUndoLazy) WordChip(label: 'Undo', selected: false, onTap: controller.undoLazy),
+              for (final shortcut in controller.profile.shortcuts)
+                WordChip(label: shortcut.name, selected: false, onTap: () => controller.applyShortcut(shortcut.id)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text('Usual, from your notes', style: EvaType.ui(12, palette.faint)),
+          const SizedBox(height: 6),
+          if (usual.isEmpty)
+            Text('The same note on two days will sit here as one tap.', style: EvaType.ui(14, palette.muted, height: 1.4))
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final note in usual)
+                  WordChip(
+                    label: '${noteLabel(note.symptom)} · ${note.count}',
+                    selected: today?.symptoms.contains(note.symptom) ?? false,
+                    onTap: () => controller.addUsual(note.symptom),
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OneTap extends StatelessWidget {
+  const _OneTap();
+
+  static const _flows = ['None', 'Light', 'Medium', 'Heavy'];
+  static const _moods = ['Calm', 'Bright', 'Tender', 'Low', 'Frayed'];
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = EvaScope.of(context);
+    final palette = evaOf(context);
+    final today = isoDay(dateOnly(controller.now()));
+    final log = controller.profile.logOn(today);
+    final previous = controller.profile.logOn(isoDay(shiftDays(controller.now(), -1)));
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('One tap', style: EvaType.ui(13, palette.muted, weight: FontWeight.w600, tracking: 0.6)),
+          const SizedBox(height: 8),
+          Text(learnedLine(controller.profile, controller.now()), style: EvaType.ui(14.5, palette.ink, height: 1.4)),
+          if (previous != null) ...[
+            const SizedBox(height: 10),
+            WordChip(label: 'Same as yesterday', selected: false, onTap: controller.repeatYesterday),
+          ],
+          const SizedBox(height: 12),
+          Text('Flow', style: EvaType.ui(12, palette.faint)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (var i = 0; i < _flows.length; i++)
+                WordChip(
+                  label: _flows[i],
+                  selected: log?.flow == i,
+                  onTap: () => controller.updateToday(flow: i),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text('Mood', style: EvaType.ui(12, palette.faint)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final mood in _moods)
+                WordChip(
+                  label: mood,
+                  selected: log?.mood == mood.toLowerCase(),
+                  onTap: () => controller.updateToday(mood: mood.toLowerCase()),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 void _openQuestion(BuildContext context, String id) {
   switch (id) {
     case 'timing':
@@ -372,7 +670,7 @@ void openTimingSheet(BuildContext context) {
   showEvaSheet(
     context,
     title: 'When did bleeding begin?',
-    body: 'Move the day until the phase sounds like your week. This stays a calendar estimate.',
+    body: 'Nothing is saved until you tap Use this rhythm. Until then, EVA is not using a period date.',
     child: const _TimingEditor(),
   );
 }
@@ -416,7 +714,7 @@ class _TimingEditorState extends State<_TimingEditor> {
     _ready = true;
     final profile = EvaScope.of(context).profile;
     final now = EvaScope.of(context).now();
-    _days = calendarDaysBetween(profile.lastPeriodStart, now).clamp(0, 60);
+    _days = profile.timingConfirmed ? calendarDaysBetween(profile.lastPeriodStart, now).clamp(0, 60) : 0;
     _length = profile.cycleLength;
     _regular = profile.regular;
   }
@@ -425,6 +723,7 @@ class _TimingEditorState extends State<_TimingEditor> {
   Widget build(BuildContext context) {
     final palette = evaOf(context);
     final now = EvaScope.of(context).now();
+    final saved = EvaScope.of(context).profile.timingConfirmed;
     final previewStart = shiftDays(now, -_days);
     final preview = projectCycle(
       HealthProfile.draft('preview').copyWith(lastPeriodStart: previewStart, cycleLength: _length, regular: _regular, timingConfirmed: true),
@@ -435,7 +734,9 @@ class _TimingEditorState extends State<_TimingEditor> {
       children: [
         Text('$_days days ago', style: EvaType.display(36, palette.ink)),
         Text(
-          'Day ${preview.day} · ${phaseLabel(preview.phase)}',
+          saved
+              ? 'Saved date. Use this rhythm replaces it. Preview: day ${preview.day}, ${phaseLabel(preview.phase)}.'
+              : 'Not saved. This preview is not your history. Day ${preview.day}, ${phaseLabel(preview.phase)}, only if you confirm.',
           style: EvaType.ui(14, palette.secondary, weight: FontWeight.w600),
         ),
         Slider(
@@ -477,7 +778,7 @@ class _TimingEditorState extends State<_TimingEditor> {
         ),
         const SizedBox(height: 8),
         SoftButton(
-          label: 'Keep the current assumption',
+          label: saved ? 'Keep the saved date' : 'Don\'t save a date',
           primary: false,
           onPressed: () {
             EvaScope.of(context).answer('timing');

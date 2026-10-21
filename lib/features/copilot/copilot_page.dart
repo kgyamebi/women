@@ -61,43 +61,42 @@ class _CopilotPageState extends State<CopilotPage> {
               child: Column(
                 children: [
                   Expanded(
-                    child: chat.isEmpty
-                        ? _empty(context, palette)
-                        : ListView.builder(
-                            controller: _scroll,
-                            itemCount: chat.length,
-                            itemBuilder: (context, index) {
-                              final turn = chat[index];
-                              final mine = turn.role == 'you';
-                              return Align(
-                                alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-                                child: Container(
-                                  constraints: const BoxConstraints(maxWidth: 560),
-                                  margin: const EdgeInsets.only(bottom: 10),
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                  decoration: BoxDecoration(
-                                    color: mine ? palette.primary : palette.glass,
-                                    borderRadius: BorderRadius.circular(22),
-                                    border: Border.all(color: mine ? Colors.transparent : palette.line),
-                                  ),
-                                  child: Text(
-                                    turn.text,
-                                    style: EvaType.ui(15.5, mine ? palette.onPrimary : palette.ink, height: 1.45),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                  if (chat.isEmpty)
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                    child: ListView(
+                      controller: _scroll,
                       children: [
-                        for (final prompt in _prompts)
-                          WordChip(label: prompt, selected: false, onTap: () => _send(context, prompt)),
+                        if (chat.isEmpty) ...[
+                          _empty(context, palette),
+                          const SizedBox(height: 16),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final prompt in _prompts)
+                                WordChip(label: prompt, selected: false, onTap: () => _send(context, prompt)),
+                            ],
+                          ),
+                        ] else
+                          for (final turn in chat)
+                            Align(
+                              alignment: turn.role == 'you' ? Alignment.centerRight : Alignment.centerLeft,
+                              child: Container(
+                                constraints: const BoxConstraints(maxWidth: 560),
+                                margin: const EdgeInsets.only(bottom: 10),
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                decoration: BoxDecoration(
+                                  color: turn.role == 'you' ? palette.primary : palette.glass,
+                                  borderRadius: BorderRadius.circular(22),
+                                  border: Border.all(color: turn.role == 'you' ? Colors.transparent : palette.line),
+                                ),
+                                child: Text(
+                                  turn.text,
+                                  style: EvaType.ui(15.5, turn.role == 'you' ? palette.onPrimary : palette.ink, height: 1.45),
+                                ),
+                              ),
+                            ),
                       ],
                     ),
+                  ),
                   const SizedBox(height: 10),
                   Row(
                     children: [
@@ -142,16 +141,15 @@ class _CopilotPageState extends State<CopilotPage> {
   }
 
   Widget _empty(BuildContext context, EvaPalette palette) {
-    final brief = EvaScope.of(context).brief;
     return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       children: [
         const EvaMark(size: 56),
         const SizedBox(height: 16),
         Text('Ask EVA', style: EvaType.display(42, palette.ink)),
         const SizedBox(height: 8),
         Text(
-          'I already have ${brief.orbKicker.toLowerCase()} in mind. Ask in your own words.',
+          'Educational guidance. Not a doctor, not a diagnosis, not contraception. Ask in your own words.',
           style: EvaType.ui(16, palette.muted),
           textAlign: TextAlign.center,
         ),

@@ -25,14 +25,17 @@ String greetingFor(Daypart part) {
 
 String _energyLine(double delta, Daypart part, {required bool cycleLed}) {
   if (!cycleLed) {
-    return 'I will follow how you feel, not a cycle percentage.';
+    return 'No energy estimate yet. EVA will not invent one from a missing period date.';
   }
-  final percent = (delta.abs() * 100).round();
-  if (delta >= 0.17 && part == Daypart.night) {
-    return 'Energy is expected to rise $percent% after you sleep.';
+  if (delta > 0.05) {
+    return part == Daypart.night
+        ? 'The phase table marks this as a higher-energy part of a cycle. It is not a measurement, including after sleep.'
+        : 'The phase table marks this as a higher-energy part of a cycle. It is not a measurement.';
   }
-  if (delta > 0) return 'Energy is expected to rise $percent%.';
-  return 'Energy is expected to sit about $percent% lower than your follicular baseline.';
+  if (delta < -0.05) {
+    return 'The phase table marks this as a lower-energy part of a cycle. It is not a measurement.';
+  }
+  return 'The phase table does not mark a strong shift here. It is not a measurement.';
 }
 
 List<String> _recommendations({
@@ -40,6 +43,7 @@ List<String> _recommendations({
   required CyclePhase phase,
   required String focus,
   required bool pregnant,
+  required bool dated,
 }) {
   if (pregnant || focus == 'pregnancy') {
     if (part == Daypart.night) {
@@ -58,6 +62,12 @@ List<String> _recommendations({
   }
   if (focus == 'pcos' && part != Daypart.night) {
     return ['Strength training', 'Protein at breakfast', 'A consistent bedtime'];
+  }
+  if (!dated) {
+    if (part == Daypart.night) {
+      return ['Protect sleep', 'Dim the room', 'Leave training for morning'];
+    }
+    return ['Save a period date before expecting a cycle estimate', 'Log only what happened', 'A clinician for medical decisions'];
   }
   if (part == Daypart.night) {
     return ['Protect sleep', 'Dim the room', 'Leave training for morning'];
@@ -94,15 +104,20 @@ List<Whisper> _whispers({
 
   final daysUntil = calendarDaysBetween(now, cycle.nextPeriod);
   if (cycleLed && daysUntil <= 2) {
-    add('period', 'Your period may begin within 48 hours.');
+    add('period', 'The calendar estimate falls within 2 days of a period. It is not a confirmed start.');
   }
-  if (part == Daypart.night || part == Daypart.evening || sleepImpact(cycle.phase) == 'High') {
-    add('bed', 'Consider an earlier bedtime tonight.');
+  if (part == Daypart.night || part == Daypart.evening || (cycleLed && sleepImpact(cycle.phase) == 'High')) {
+    add(
+      'bed',
+      cycleLed && cycle.phase == CyclePhase.lateLuteal
+          ? 'A textbook late luteal stretch is often described with lighter sleep. That is a model, not a reading from a ring.'
+          : 'An earlier bedtime is a general suggestion, not a reading of your sleep.',
+    );
   }
   if (cycleLed &&
       (part == Daypart.morning || part == Daypart.afternoon) &&
       (cycle.phase == CyclePhase.lateFollicular || cycle.phase == CyclePhase.ovulatory)) {
-    add('energy', 'Your energy may peak this afternoon.');
+    add('energy', 'This part of a typical cycle is often higher energy. EVA does not know your afternoon.');
   }
   if (part != Daypart.night) {
     add('water', 'Hydration recommended.');
@@ -128,7 +143,7 @@ List<HealthNote> _notes(HealthProfile profile, DateTime now) {
     final day = tryParseDay(log.day);
     if (day == null) continue;
     final phase = projectCycle(profile, day).phase;
-    if (log.symptoms.contains('headache') && phase == CyclePhase.lateLuteal) {
+    if (profile.timingConfirmed && log.symptoms.contains('headache') && phase == CyclePhase.lateLuteal) {
       lateHeadaches += 1;
     }
     if (log.mood == 'low' || log.mood == 'frayed') lowMood += 1;
@@ -222,15 +237,48 @@ List<Signal> _signals({
     ];
   }
 
+  final trust = cycleTrust(profile);
+  if (!trust.dated) {
+    final loggedMood = profile.logOn(isoDay(now))?.mood ?? '';
+    return [
+      Signal(
+        label: loggedMood.isEmpty ? 'Mood' : 'Mood today',
+        value: loggedMood.isEmpty ? 'Not enough information yet' : _title(loggedMood),
+        caption: loggedMood.isEmpty ? 'Unlogged' : 'What you logged',
+        detail: loggedMood.isEmpty ? trust.evidence : 'This is the mood you logged. It is not a diagnosis.',
+      ),
+      const Signal(
+        label: 'Sleep',
+        value: 'Not enough information yet',
+        caption: 'Unlogged',
+        detail: 'No sleep record is being estimated.',
+      ),
+      Signal(
+        label: 'Energy',
+        value: 'Not enough information yet',
+        caption: 'No score',
+        detail: trust.evidence,
+      ),
+      Signal(
+        label: 'Cycle',
+        value: trust.label,
+        caption: 'No score',
+        detail: trust.evidence,
+      ),
+    ];
+  }
   final delta = energyDelta(cycle.phase);
-  final energyValue = delta > 0 ? '+${(delta * 100).round()}%' : '${(delta * 100).round()}%';
-  final provisional = profile.timingConfirmed ? 'Calendar estimate' : 'Provisional';
+  final energyValue = delta > 0.05 ? 'Higher estimate' : delta < -0.05 ? 'Lower estimate' : 'Steady estimate';
+  final loggedMood = profile.logOn(isoDay(now))?.mood ?? '';
+  final hasMood = loggedMood.isNotEmpty;
   return [
     Signal(
-      label: 'Mood forecast',
-      value: moodLabel(cycle.phase),
-      caption: 'Phase outlook',
-      detail: 'A mood forecast is the usual emotional weather of this phase, not a promise about your day. Logged mood always outranks it.',
+      label: hasMood ? 'Mood today' : 'Mood forecast',
+      value: hasMood ? _title(loggedMood) : moodLabel(cycle.phase),
+      caption: hasMood ? 'What you logged' : 'Phase outlook',
+      detail: hasMood
+          ? 'This is the mood you logged today. The phase outlook steps back until you clear it.'
+          : 'A mood forecast is the usual emotional weather of this phase, not a promise about your day.',
     ),
     Signal(
       label: 'Sleep impact',
@@ -242,13 +290,13 @@ List<Signal> _signals({
       label: 'Energy',
       value: energyValue,
       caption: 'Modeled today',
-      detail: 'The percentage compares this phase with a lower luteal baseline in a textbook cycle. It is not a reading from your body.',
+      detail: 'Higher, steady, or lower comes from a textbook phase table. It is not a reading from your body.',
     ),
     Signal(
-      label: 'Cycle confidence',
-      value: percentLabel(cycle.confidence),
-      caption: provisional,
-      detail: 'Calendar confidence is high only when a rhythm is regular and recently anchored. It is not proof of ovulation. A temperature shift or an ovulation test would make it physiological.',
+      label: 'Cycle',
+      value: trust.label,
+      caption: 'Evidence',
+      detail: trust.evidence,
     ),
   ];
 }
@@ -258,9 +306,9 @@ DailyBrief buildBrief(HealthProfile profile, DateTime now) {
   final cycle = projectCycle(profile, now);
   final menopause = profile.focus == 'menopause' || profile.contexts.contains('menopause');
   final pregnant = profile.pregnant;
-  final lmp = profile.pregnancyLmp ?? profile.lastPeriodStart;
-  final pregnancy = pregnant ? pregnancyStory(lmp, now) : null;
-  final cycleLed = !pregnant && !menopause;
+  final lmp = profile.pregnancyLmp;
+  final pregnancy = pregnant && lmp != null ? pregnancyStory(lmp, now) : null;
+  final cycleLed = !pregnant && !menopause && profile.timingConfirmed;
   final daysAgo = calendarDaysBetween(profile.lastPeriodStart, now);
 
   var orbKicker = phaseLabel(cycle.phase);
@@ -293,6 +341,12 @@ DailyBrief buildBrief(HealthProfile profile, DateTime now) {
     orbKicker = 'Pregnancy';
     orbValue = 'Ready';
     headline = 'When a pregnancy is confirmed, this day reshapes around it.';
+  } else if (!profile.timingConfirmed) {
+    orbKicker = 'Rhythm';
+    orbValue = 'Unknown';
+    headline = 'Not enough information yet. A cycle day appears after you save a period date.';
+  } else if (headline.contains('likely')) {
+    headline = 'Estimated from the period date you saved: the ${phasePhrase(cycle.phase)}. Not a measurement.';
   }
 
   final assumption = pregnant
@@ -300,8 +354,8 @@ DailyBrief buildBrief(HealthProfile profile, DateTime now) {
       : menopause
           ? 'Cycle dates sit in the background while menopause is the focus.'
           : profile.timingConfirmed
-              ? 'Bleeding began $daysAgo days ago, in a ${profile.cycleLength}-day rhythm.'
-              : 'I am assuming bleeding began $daysAgo days ago, in a regular ${profile.cycleLength}-day rhythm.';
+              ? 'The saved period date was $daysAgo days ago, in a ${profile.cycleLength}-day rhythm you set. Later dates are estimates.'
+              : 'No period date is saved. EVA is not guessing one.';
 
   return DailyBrief(
     daypart: part,
@@ -316,6 +370,7 @@ DailyBrief buildBrief(HealthProfile profile, DateTime now) {
       phase: cycle.phase,
       focus: profile.focus,
       pregnant: pregnant,
+      dated: profile.timingConfirmed,
     ),
     signals: _signals(
       profile: profile,
@@ -337,6 +392,88 @@ DailyBrief buildBrief(HealthProfile profile, DateTime now) {
     pregnancy: pregnancy,
     wearable: profile.wearableSample ? sampleNight : null,
     notes: _notes(profile, now),
+  );
+}
+
+String learnedLine(HealthProfile profile, DateTime now) {
+  final phase = projectCycle(profile, now).phase;
+  final counts = <String, int>{};
+  for (final log in profile.logs) {
+    final day = tryParseDay(log.day);
+    if (day == null || projectCycle(profile, day).phase != phase) continue;
+    for (final symptom in log.symptoms) {
+      counts[symptom] = (counts[symptom] ?? 0) + 1;
+    }
+  }
+  if (counts.isEmpty) {
+    return profile.timingConfirmed
+        ? 'Tomorrow is already on the calendar. If it feels like today, one tap repeats it.'
+        : 'Confirm the first day of bleeding once. After that, the day arrives without a form.';
+  }
+  final top = counts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+  if (top.first.value < 2) {
+    return 'You logged ${top.first.key} once in this phase. A second time is what turns a note into a pattern.';
+  }
+  return 'In this phase, ${top.first.key} has shown up ${top.first.value} times. That is your pattern, not a diagnosis.';
+}
+
+String _title(String value) {
+  if (value.isEmpty) return value;
+  return value[0].toUpperCase() + value.substring(1);
+}
+
+String briefName(Daypart part) {
+  switch (part) {
+    case Daypart.morning:
+      return 'Morning brief';
+    case Daypart.afternoon:
+      return 'Afternoon brief';
+    case Daypart.evening:
+      return 'Evening brief';
+    case Daypart.night:
+      return 'Sleep brief';
+  }
+}
+
+class DayForecast {
+  const DayForecast({
+    required this.energy,
+    required this.rising,
+    required this.mood,
+    required this.focus,
+    required this.modeled,
+  });
+
+  final int energy;
+  final bool? rising;
+  final String mood;
+  final String focus;
+  final List<String> modeled;
+}
+
+DayForecast dayForecast(HealthProfile profile, DailyBrief brief, DateTime now) {
+  final phase = brief.cycle.phase;
+  final delta = energyDelta(phase);
+  final loggedMood = profile.logOn(isoDay(now))?.mood ?? '';
+  return DayForecast(
+    energy: ((0.5 + delta) * 100).round().clamp(0, 100),
+    rising: delta.abs() < 0.05 ? null : delta > 0,
+    mood: loggedMood.isNotEmpty ? _title(loggedMood) : moodLabel(phase),
+    focus: switch (phase) {
+      CyclePhase.lateFollicular || CyclePhase.ovulatory => 'High',
+      CyclePhase.earlyFollicular || CyclePhase.earlyLuteal => 'Steady',
+      CyclePhase.menstrual || CyclePhase.lateLuteal => 'Soft',
+    },
+    modeled: switch (phase) {
+      CyclePhase.lateFollicular || CyclePhase.ovulatory => const [
+          'High productivity',
+          'Lower cravings',
+          'Strong workout potential',
+        ],
+      CyclePhase.lateLuteal => const ['Gentler pace', 'Appetite may rise', 'Protect sleep'],
+      CyclePhase.menstrual => const ['Rest counts', 'Warm meals', 'A short walk if you want one'],
+      _ => const ['Steady work', 'Regular meals', 'Familiar training'],
+    },
   );
 }
 

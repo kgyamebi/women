@@ -28,13 +28,18 @@ class YouPage extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Eyebrow(text: 'Health intelligence'),
+                    const Eyebrow(text: 'Your profile'),
                     const SizedBox(height: 8),
                     Text(profile.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: EvaType.display(48, palette.ink)),
                     const SizedBox(height: 6),
                     Text(
                       '$signals of 7 signals in the profile. The rest arrives as you live with EVA, not as a setup form.',
                       style: EvaType.ui(15, palette.muted, height: 1.4),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _weekLine(controller),
+                      style: EvaType.ui(15, palette.ink, height: 1.4),
                     ),
                     const SizedBox(height: 16),
                     Wrap(
@@ -55,6 +60,23 @@ class YouPage extends StatelessWidget {
                         Expanded(child: _stat(palette, 'Focus', _focusLabel(profile.focus))),
                         const SizedBox(width: 12),
                         Expanded(child: _stat(palette, 'Alias', profile.communityAlias)),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    Text('Life stage', style: EvaType.ui(13, palette.muted, weight: FontWeight.w600, tracking: 0.4)),
+                    const SizedBox(height: 8),
+                    Text(stageLine(profile.focus), style: EvaType.ui(14, palette.ink, height: 1.4)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final stage in lifeStages)
+                          WordChip(
+                            label: stage.$2,
+                            selected: profile.focus == stage.$1,
+                            onTap: () => controller.setFocus(stage.$1),
+                          ),
                       ],
                     ),
                     const SizedBox(height: 18),
@@ -137,6 +159,18 @@ class YouPage extends StatelessWidget {
     );
   }
 
+  String _weekLine(EvaController controller) {
+    final start = dateOnly(shiftDays(controller.now(), -6));
+    final notes = controller.profile.logs.where((log) {
+      final day = tryParseDay(log.day);
+      return day != null && !day.isBefore(start);
+    }).length;
+    if (notes == 0) {
+      return 'This week is still quiet, and the brief still shows up morning, afternoon, evening, and night. You do not have to log for it to be here.';
+    }
+    return 'This week, $notes ${notes == 1 ? 'note' : 'notes'}. The brief keeps the day. The notes make the forecast personal.';
+  }
+
   void _rename(BuildContext context) {
     final controller = EvaScope.of(context);
     final text = TextEditingController(text: controller.profile.name);
@@ -187,7 +221,7 @@ class YouPage extends StatelessWidget {
       case 'mental':
         return 'Mind';
       default:
-        return 'Cycle';
+        return stageLabel(focus);
     }
   }
 }

@@ -115,6 +115,48 @@ class DailyLog {
   }
 }
 
+class LogShortcut {
+  const LogShortcut({
+    required this.id,
+    required this.name,
+    required this.flow,
+    required this.mood,
+    required this.stress,
+    this.energy,
+    this.symptoms = const [],
+  });
+
+  final String id;
+  final String name;
+  final int flow;
+  final String mood;
+  final String stress;
+  final double? energy;
+  final List<String> symptoms;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'flow': flow,
+        'mood': mood,
+        'stress': stress,
+        'energy': energy,
+        'symptoms': symptoms,
+      };
+
+  factory LogShortcut.fromJson(Map<String, dynamic> json) {
+    return LogShortcut(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      flow: (json['flow'] as num?)?.toInt() ?? 0,
+      mood: json['mood'] as String? ?? '',
+      stress: json['stress'] as String? ?? '',
+      energy: (json['energy'] as num?)?.toDouble(),
+      symptoms: _strings(json['symptoms']),
+    );
+  }
+}
+
 class ChatTurn {
   const ChatTurn({required this.role, required this.text, required this.at});
 
@@ -251,6 +293,99 @@ class DayFlags {
   }
 }
 
+class CircleMemory {
+  const CircleMemory({required this.title, required this.day, required this.note});
+
+  final String title;
+  final String day;
+  final String note;
+
+  Map<String, dynamic> toJson() => {'title': title, 'day': day, 'note': note};
+
+  factory CircleMemory.fromJson(Map<String, dynamic> json) {
+    return CircleMemory(
+      title: json['title'] as String? ?? '',
+      day: json['day'] as String? ?? '',
+      note: json['note'] as String? ?? '',
+    );
+  }
+}
+
+class CirclePerson {
+  const CirclePerson({
+    required this.id,
+    required this.name,
+    required this.role,
+    this.permissions = const [],
+    this.missionDays = const [],
+    this.goals = const [],
+    this.memories = const [],
+    this.checkIns = 0,
+  });
+
+  final String id;
+  final String name;
+  final String role;
+  final List<String> permissions;
+  final List<String> missionDays;
+  final List<String> goals;
+  final List<CircleMemory> memories;
+  final int checkIns;
+
+  bool allows(String key) => permissions.contains(key);
+
+  CirclePerson copyWith({
+    String? name,
+    String? role,
+    List<String>? permissions,
+    List<String>? missionDays,
+    List<String>? goals,
+    List<CircleMemory>? memories,
+    int? checkIns,
+  }) {
+    return CirclePerson(
+      id: id,
+      name: name ?? this.name,
+      role: role ?? this.role,
+      permissions: permissions ?? this.permissions,
+      missionDays: missionDays ?? this.missionDays,
+      goals: goals ?? this.goals,
+      memories: memories ?? this.memories,
+      checkIns: checkIns ?? this.checkIns,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'role': role,
+        'permissions': permissions,
+        'missionDays': missionDays,
+        'goals': goals,
+        'memories': memories.map((memory) => memory.toJson()).toList(),
+        'checkIns': checkIns,
+      };
+
+  factory CirclePerson.fromJson(Map<String, dynamic> json) {
+    final memories = json['memories'];
+    return CirclePerson(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      role: json['role'] as String? ?? 'partner',
+      permissions: _strings(json['permissions']),
+      missionDays: _strings(json['missionDays']),
+      goals: _strings(json['goals']),
+      memories: memories is List
+          ? memories
+              .whereType<Map>()
+              .map((item) => CircleMemory.fromJson(item.map((key, value) => MapEntry(key.toString(), value))))
+              .toList()
+          : const [],
+      checkIns: (json['checkIns'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
 class HealthProfile {
   HealthProfile({
     required this.name,
@@ -291,6 +426,12 @@ class HealthProfile {
     required List<String> answered,
     required List<String> mealsNoted,
     required List<String> workouts,
+    required List<CirclePerson> circle,
+    required List<LogShortcut> shortcuts,
+    required this.ageAffirmed,
+    required this.healthConsentAt,
+    required this.revision,
+    required List<String> audit,
   })  : intentions = List<String>.unmodifiable(intentions),
         contexts = List<String>.unmodifiable(contexts),
         milestones = List<String>.unmodifiable(milestones),
@@ -309,7 +450,10 @@ class HealthProfile {
         labsOpened = List<String>.unmodifiable(labsOpened),
         answered = List<String>.unmodifiable(answered),
         mealsNoted = List<String>.unmodifiable(mealsNoted),
-        workouts = List<String>.unmodifiable(workouts);
+        workouts = List<String>.unmodifiable(workouts),
+        circle = List<CirclePerson>.unmodifiable(circle),
+        shortcuts = List<LogShortcut>.unmodifiable(shortcuts),
+        audit = List<String>.unmodifiable(audit);
 
   final String name;
   final DateTime lastPeriodStart;
@@ -349,6 +493,14 @@ class HealthProfile {
   final List<String> answered;
   final List<String> mealsNoted;
   final List<String> workouts;
+  final List<CirclePerson> circle;
+  final List<LogShortcut> shortcuts;
+  final bool ageAffirmed;
+  final String? healthConsentAt;
+  final int revision;
+  final List<String> audit;
+
+  bool get healthReady => ageAffirmed && (healthConsentAt?.isNotEmpty ?? false);
 
   factory HealthProfile.draft(String name, {DateTime? now}) {
     final clock = dateOnly(now ?? DateTime.now());
@@ -392,6 +544,12 @@ class HealthProfile {
       answered: const [],
       mealsNoted: const [],
       workouts: const [],
+      circle: const [],
+      shortcuts: const [],
+      ageAffirmed: false,
+      healthConsentAt: null,
+      revision: 0,
+      audit: const [],
     );
   }
 
@@ -415,6 +573,7 @@ class HealthProfile {
       weights: tail(weights, 90),
       pcosDays: tail(pcosDays, 120),
       dismissed: tail(dismissed, 60),
+      circle: tail(circle, 24),
     );
   }
 
@@ -457,6 +616,12 @@ class HealthProfile {
     List<String>? answered,
     List<String>? mealsNoted,
     List<String>? workouts,
+    List<CirclePerson>? circle,
+    List<LogShortcut>? shortcuts,
+    bool? ageAffirmed,
+    Object? healthConsentAt = _unset,
+    int? revision,
+    List<String>? audit,
   }) {
     return HealthProfile(
       name: name ?? this.name,
@@ -497,6 +662,12 @@ class HealthProfile {
       answered: answered ?? this.answered,
       mealsNoted: mealsNoted ?? this.mealsNoted,
       workouts: workouts ?? this.workouts,
+      circle: circle ?? this.circle,
+      shortcuts: shortcuts ?? this.shortcuts,
+      ageAffirmed: ageAffirmed ?? this.ageAffirmed,
+      healthConsentAt: healthConsentAt == _unset ? this.healthConsentAt : healthConsentAt as String?,
+      revision: revision ?? this.revision,
+      audit: audit ?? this.audit,
     );
   }
 
@@ -539,6 +710,12 @@ class HealthProfile {
         'answered': answered,
         'mealsNoted': mealsNoted,
         'workouts': workouts,
+        'circle': circle.map((person) => person.toJson()).toList(),
+        'shortcuts': shortcuts.map((shortcut) => shortcut.toJson()).toList(),
+        'ageAffirmed': ageAffirmed,
+        'healthConsentAt': healthConsentAt,
+        'revision': revision,
+        'audit': audit,
       };
 
   factory HealthProfile.fromJson(Map<String, dynamic> json) {
@@ -590,6 +767,16 @@ class HealthProfile {
       answered: _strings(json['answered']),
       mealsNoted: _strings(json['mealsNoted']),
       workouts: _strings(json['workouts']),
+      circle: mapList(json['circle'], CirclePerson.fromJson),
+      shortcuts: mapList(json['shortcuts'], LogShortcut.fromJson),
+      ageAffirmed: json['ageAffirmed'] as bool? ?? false,
+      healthConsentAt: json['healthConsentAt'] as String?,
+      revision: (json['revision'] as num?)?.toInt() ?? 0,
+      audit: _strings(json['audit']),
     );
   }
+}
+
+bool saveWouldOverwriteNewer(HealthProfile? stored, HealthProfile incoming) {
+  return stored != null && stored.revision > incoming.revision;
 }

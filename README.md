@@ -1,8 +1,10 @@
-# EVA AI
+# EVA
 
-Your personal women's health intelligence. A Flutter client for cycle, pregnancy, fertility, PCOS, menopause, and a context-aware health copilot.
+Educational guidance for cycle notes. A Flutter client for cycle, pregnancy, fertility, PCOS, and menopause.
 
-EVA explains patterns. It does not diagnose.
+EVA explains patterns from what you type. It does not diagnose, and it is not a medical device.
+
+The public web build is at https://kgyamebi.github.io/women/
 
 ```bash
 flutter pub get
